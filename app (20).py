@@ -1,0 +1,184 @@
+import streamlit as st
+import pickle
+import pandas as pd
+import plotly.express as px
+from sklearn.preprocessing import MinMaxScaler
+import os
+
+# ────────────────────────────────────────────────
+# Page configuration
+# ────────────────────────────────────────────────
+st.set_page_config(
+    page_title="Customer Churn Prediction",
+    page_icon="🏦",
+    layout="wide"
+)
+
+# ────────────────────────────────────────────────
+# Load model and scaler
+# ────────────────────────────────────────────────
+@st.cache_resource
+def load_model_and_scaler():
+    with open('best_model.pkl', 'rb') as file:
+        model = pickle.load(file)
+    with open('scaler.pkl', 'rb') as file:
+        scaler = pickle.load(file)
+    return model, scaler
+
+model, scaler = load_model_and_scaler()
+
+# ────────────────────────────────────────────────
+# Feature configuration
+# ────────────────────────────────────────────────
+FEATURE_NAMES = [
+    'CreditScore', 'Age', 'Tenure', 'Balance', 'NumOfProducts', 'EstimatedSalary',
+    'Geography_France', 'Geography_Germany', 'Geography_Spain',
+    'Gender_Female', 'Gender_Male',
+    'HasCrCard_0', 'HasCrCard_1',
+    'IsActiveMember_0', 'IsActiveMember_1'
+]
+
+SCALING_FEATURES = ['CreditScore', 'Age', 'Tenure', 'Balance', 'NumOfProducts', 'EstimatedSalary']
+
+# ────────────────────────────────────────────────
+# Sidebar - User Inputs
+# ────────────────────────────────────────────────
+st.sidebar.header("Customer Information")
+
+# Default / example values
+defaults = {
+    'CreditScore': 650,
+    'Age': 38,
+    'Tenure': 5,
+    'Balance': 0.0,
+    'NumOfProducts': 2,
+    'EstimatedSalary': 100000.0,
+    'Geography_France': True,
+    'Geography_Germany': False,
+    'Geography_Spain': False,
+    'Gender_Female': False,
+    'Gender_Male': True,
+    'HasCrCard_1': True,
+    'HasCrCard_0': False,
+    'IsActiveMember_1': True,
+    'IsActiveMember_0': False
+}
+
+# Collect inputs
+user_data = {}
+
+with st.sidebar:
+    user_data['CreditScore'] = st.slider("Credit Score", 300, 900, defaults['CreditScore'])
+    user_data['Age'] = st.slider("Age", 18, 100, defaults['Age'])
+    user_data['Tenure'] = st.slider("Tenure (years)", 0, 10, defaults['Tenure'])
+    user_data['Balance'] = st.slider("Balance (€)", 0.0, 250000.0, defaults['Balance'], step=1000.0)
+    user_data['NumOfProducts'] = st.slider("Number of Products", 1, 4, defaults['NumOfProducts'])
+    user_data['EstimatedSalary'] = st.slider("Estimated Salary (€)", 0.0, 250000.0, defaults['EstimatedSalary'], step=1000.0)
+
+    st.markdown("---")
+    st.subheader("Geography")
+    geo = st.radio("Geography", ["France", "Germany", "Spain"], index=0)
+    user_data['Geography_France']  = (geo == "France")
+    user_data['Geography_Germany'] = (geo == "Germany")
+    user_data['Geography_Spain']   = (geo == "Spain")
+
+    st.subheader("Gender")
+    gender = st.radio("Gender", ["Male", "Female"], index=0)
+    user_data['Gender_Male']   = (gender == "Male")
+    user_data['Gender_Female'] = (gender == "Female")
+
+    st.subheader("Credit Card")
+    has_cc = st.radio("Has Credit Card?", ["Yes", "No"], index=0)
+    user_data['HasCrCard_1'] = (has_cc == "Yes")
+    user_data['HasCrCard_0'] = (has_cc == "No")
+
+    st.subheader("Active Member")
+    active = st.radio("Is Active Member?", ["Yes", "No"], index=0)
+    user_data['IsActiveMember_1'] = (active == "Yes")
+    user_data['IsActiveMember_0'] = (active == "No")
+
+    # Optional: show header image in sidebar (if you have it)
+    # st.image("header.png", use_column_width=True)
+
+# ────────────────────────────────────────────────
+# Main Page
+# ────────────────────────────────────────────────
+st.title("🏦 Customer Churn Prediction")
+st.markdown("Enter customer details on the left and click **Predict** to see the result.")
+
+# Two-column layout
+col1, col2 = st.columns([1, 1])
+
+# ─── Left: Feature Importance ───────────────────────────────────────
+with col1:
+    st.subheader("Feature Importance")
+
+    try:
+        importance_df = pd.read_excel("feature_importance.xlsx")
+        fig = px.bar(
+            importance_df.sort_values("Importance", ascending=True),
+            x="Importance",
+            y="Feature",
+            orientation="h",
+            title="Top Features Driving Churn",
+            color="Importance",
+            color_continuous_scale="Blues"
+        )
+        fig.update_layout(height=500)
+        st.plotly_chart(fig, use_container_width=True)
+    except FileNotFoundError:
+        st.warning("feature_importance.xlsx not found. Please upload it.")
+    except Exception as e:
+        st.error(f"Error loading feature importance: {e}")
+
+# ─── Right: Prediction ───────────────────────────────────────────────
+with col2:
+    st.subheader("Make a Prediction")
+
+    if st.button("Predict Churn Risk", type="primary", use_container_width=True):
+        with st.spinner("Making prediction..."):
+            # Create DataFrame from user input
+            input_df = pd.DataFrame([user_data])
+
+            # Ensure correct column order
+            input_df = input_df[FEATURE_NAMES]
+
+            # Scale numerical features
+            input_df[SCALING_FEATURES] = scaler.transform(input_df[SCALING_FEATURES])
+
+            # Predict
+            prediction = model.predict(input_df)[0]
+            probability = model.predict_proba(input_df)[0][1]  # probability of churn (class 1)
+
+            # Result display
+            if prediction == 1:
+                st.error(f"**High Risk: This customer is likely to CHURN**")
+                st.metric("Churn Probability", f"{probability:.1%}", delta_color="off")
+            else:
+                st.success(f"**Low Risk: This customer is likely to STAY**")
+                st.metric("Churn Probability", f"{probability:.1%}", delta_color="off")
+
+            st.markdown(f"**Probability of churning**: {probability:.1%}")
+            st.markdown(f"**Probability of staying**: {(1 - probability):.1%}")
+
+# ────────────────────────────────────────────────
+# Download Source Code Button (automatically downloads app.py)
+# ────────────────────────────────────────────────
+st.markdown("---")
+
+# Read the current script's source code
+try:
+    with open(os.path.abspath(__file__), "rb") as f:
+        source_code = f.read()
+    st.download_button(
+        label="Download Source Code (app.py)",
+        data=source_code,
+        file_name="app.py",
+        mime="text/python",
+        help="Click to download this app's Python source code."
+    )
+except Exception as e:
+    st.warning(f"Could not load source code for download: {e}")
+
+# Footer
+st.caption("Customer Churn Prediction App • Powered by XGBoost • Built with Streamlit")
